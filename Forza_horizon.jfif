@@ -1,0 +1,1157 @@
+import React, { useState, useEffect, useRef } from "react";
+import {
+  View,
+  Text,
+  FlatList,
+  Image,
+  TouchableOpacity,
+  StyleSheet,
+  SafeAreaView,
+  TextInput,
+  ScrollView,
+  Dimensions,
+  Alert,
+  Linking,
+  ActivityIndicator,
+  Modal,
+  Animated,
+  Switch,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Notifications from "expo-notifications";
+
+const { width } = Dimensions.get("window");
+const ADMIN_PASSWORD = "0000";
+
+const STORAGE_KEYS = {
+  USERS: "@pixelstore:users",
+  CART: "@pixelstore:cart",
+  LOGGED_USER: "@pixelstore:loggedUser",
+  GAMES: "@pixelstore:games",
+  PURCHASE_HISTORY: "@pixelstore:history",
+  WISHLIST: "@pixelstore:wishlist",
+  RATINGS: "@pixelstore:ratings",
+  THEME: "@pixelstore:theme",
+};
+
+const DEFAULT_GAMES = [
+  { id: "1", name: "GTA V", company: "Rockstar Games", price: 99.9, trailer: "https://youtu.be/QkkoHAzjnUs", description: "Grand Theft Auto V é um jogo de ação em mundo aberto extremamente popular.", image: require("./assets/gtav.PNG") },
+  { id: "2", name: "Forza Horizon 5", company: "Xbox Game Studios", price: 299.9, trailer: "https://youtu.be/FYH9n37B7Yw", description: "Jogo de corrida em mundo aberto com gráficos incríveis.", image: require("./assets/Forza_horizon.jfif") },
+  { id: "3", name: "Red Dead Redemption 2", company: "Rockstar Games", price: 149.9, trailer: "https://youtu.be/gmA6MrX81z4", description: "Aventura cinematográfica no velho oeste.", image: require("./assets/Red_dead.jfif") },
+  { id: "4", name: "EA FC 26", company: "EA Sports", price: 189.9, trailer: "https://youtu.be/pBM2xyco_Kg", description: "Simulador de futebol moderno e competitivo.", image: require("./assets/EA_fc.jfif") },
+  { id: "5", name: "Call of Duty", company: "Activision", price: 249.9, trailer: "https://youtu.be/bH1lHCirCGI", description: "Jogo de tiro intenso e competitivo.", image: require("./assets/Call_of_duty_4.jfif") },
+  { id: "6", name: "Minecraft", company: "Mojang Studios", price: 79.9, trailer: "https://youtu.be/MmB9b5njVbA", description: "Construa e explore mundos infinitos.", image: require("./assets/Minecraft.jfif") },
+];
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+function BackButton({ onPress, dark }) {
+  return (
+    <TouchableOpacity style={styles.backButton} onPress={onPress}>
+      <Text style={[styles.backText, dark && { color: "#2563eb" }]}>← Voltar</Text>
+    </TouchableOpacity>
+  );
+}
+
+function StarRating({ rating, onRate, size = 22 }) {
+  return (
+    <View style={{ flexDirection: "row", gap: 4 }}>
+      {[1, 2, 3, 4, 5].map(star => (
+        <TouchableOpacity key={star} onPress={() => onRate && onRate(star)} disabled={!onRate}>
+          <Text style={{ fontSize: size, color: star <= rating ? "#f59e0b" : "#334155" }}>★</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+function AdminModal({ visible, adminPassword, setAdminPassword, adminPasswordError, setAdminPasswordError, onConfirm, onClose, theme }) {
+  const t = theme;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalBox, { backgroundColor: t.card, borderColor: t.border }]}>
+          <Text style={[styles.modalTitle, { color: t.text }]}>🔐 Área Admin</Text>
+          <Text style={[styles.modalMessage, { color: t.subtext }]}>Digite a senha de administrador</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: t.input, color: t.text }, adminPasswordError && { borderWidth: 1, borderColor: "#dc2626" }]}
+            placeholder="Senha"
+            placeholderTextColor={t.placeholder}
+            secureTextEntry
+            value={adminPassword}
+            onChangeText={t2 => { setAdminPassword(t2); setAdminPasswordError(false); }}
+            onSubmitEditing={onConfirm}
+            autoFocus={false}
+          />
+          {adminPasswordError && <Text style={styles.errorText}>Senha incorreta!</Text>}
+          <View style={styles.modalButtons}>
+            <TouchableOpacity style={[styles.modalCancel, { backgroundColor: t.inputAlt }]} onPress={onClose}>
+              <Text style={[styles.modalCancelText, { color: t.text }]}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalConfirmBlue} onPress={onConfirm}>
+              <Text style={styles.modalConfirmText}>Entrar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function LogoutModal({ visible, onClose, onConfirm, theme }) {
+  const t = theme;
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalBox, { backgroundColor: t.card, borderColor: t.border }]}>
+          <Text style={[styles.modalTitle, { color: t.text }]}>Sair da conta</Text>
+          <Text style={[styles.modalMessage, { color: t.subtext }]}>Deseja encerrar a sessão?</Text>
+          <View style={styles.modalButtons}>
+            <TouchableOpacity style={[styles.modalCancel, { backgroundColor: t.inputAlt }]} onPress={onClose}>
+              <Text style={[styles.modalCancelText, { color: t.text }]}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalConfirm} onPress={onConfirm}>
+              <Text style={styles.modalConfirmText}>Sair</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function EditGameModal({ editingGame, setEditingGame, onSave, theme }) {
+  const t = theme;
+  return (
+    <Modal visible={!!editingGame} transparent animationType="slide" onRequestClose={() => setEditingGame(null)}>
+      <View style={styles.modalOverlay}>
+        <View style={[styles.modalBox, { width: "90%", backgroundColor: t.card, borderColor: t.border }]}>
+          <Text style={[styles.modalTitle, { color: t.text }]}>✏️ Editar Jogo</Text>
+          <ScrollView>
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Nome do jogo" placeholderTextColor={t.placeholder} value={editingGame?.name || ""} onChangeText={v => setEditingGame(p => ({ ...p, name: v }))} />
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Empresa" placeholderTextColor={t.placeholder} value={editingGame?.company || ""} onChangeText={v => setEditingGame(p => ({ ...p, company: v }))} />
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Preço (ex: 99.90)" placeholderTextColor={t.placeholder} keyboardType="numeric" value={String(editingGame?.price || "")} onChangeText={v => setEditingGame(p => ({ ...p, price: v }))} />
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Link do trailer" placeholderTextColor={t.placeholder} value={editingGame?.trailer || ""} onChangeText={v => setEditingGame(p => ({ ...p, trailer: v }))} />
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text, height: 80, textAlignVertical: "top" }]} placeholder="Descrição" placeholderTextColor={t.placeholder} multiline value={editingGame?.description || ""} onChangeText={v => setEditingGame(p => ({ ...p, description: v }))} />
+          </ScrollView>
+          <View style={[styles.modalButtons, { marginTop: 16 }]}>
+            <TouchableOpacity style={[styles.modalCancel, { backgroundColor: t.inputAlt }]} onPress={() => setEditingGame(null)}>
+              <Text style={[styles.modalCancelText, { color: t.text }]}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalConfirmBlue} onPress={onSave}>
+              <Text style={styles.modalConfirmText}>Salvar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const DARK_THEME = {
+  bg: "#020617",
+  card: "#0f172a",
+  input: "#1e293b",
+  inputAlt: "#1e293b",
+  border: "#1e293b",
+  text: "#ffffff",
+  subtext: "#94a3b8",
+  placeholder: "#94a3b8",
+  muted: "#64748b",
+  header: "#0f172a",
+  success: "#22c55e",
+  accent: "#38bdf8",
+};
+
+const LIGHT_THEME = {
+  bg: "#f1f5f9",
+  card: "#ffffff",
+  input: "#f1f5f9",
+  inputAlt: "#e2e8f0",
+  border: "#e2e8f0",
+  text: "#0f172a",
+  subtext: "#475569",
+  placeholder: "#94a3b8",
+  muted: "#64748b",
+  header: "#ffffff",
+  success: "#16a34a",
+  accent: "#2563eb",
+};
+
+export default function App() {
+  const [screen, setScreen] = useState("splash");
+  const [isLogged, setIsLogged] = useState(false);
+  const [selectedGame, setSelectedGame] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [isDark, setIsDark] = useState(true);
+  const theme = isDark ? DARK_THEME : LIGHT_THEME;
+
+  const splashOpacity = useRef(new Animated.Value(1)).current;
+  const splashScale = useRef(new Animated.Value(0.7)).current;
+
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminPasswordError, setAdminPasswordError] = useState(false);
+  const [adminTab, setAdminTab] = useState("users");
+
+  const [newUser, setNewUser] = useState({ firstName: "", lastName: "", cpf: "", phone: "", email: "", password: "" });
+  const [showNewUserForm, setShowNewUserForm] = useState(false);
+
+  const [games, setGames] = useState(DEFAULT_GAMES);
+  const [newGame, setNewGame] = useState({ name: "", company: "", price: "", trailer: "", description: "" });
+  const [showNewGameForm, setShowNewGameForm] = useState(false);
+  const [editingGame, setEditingGame] = useState(null);
+
+  const [users, setUsers] = useState([]);
+  const [loggedUser, setLoggedUser] = useState(null);
+  const [loginData, setLoginData] = useState({ email: "", password: "" });
+  const [registerData, setRegisterData] = useState({ firstName: "", lastName: "", cpf: "", phone: "", email: "", password: "" });
+
+  const [cart, setCart] = useState([]);
+
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [pixKey, setPixKey] = useState("");
+  const [purchaseKeys, setPurchaseKeys] = useState([]);
+  const [purchaseDate, setPurchaseDate] = useState("");
+  const [cardData, setCardData] = useState({ cardName: "", cardNumber: "", expiry: "", cvv: "" });
+
+  const [purchaseHistory, setPurchaseHistory] = useState([]);
+  const [wishlist, setWishlist] = useState([]);
+  const [ratings, setRatings] = useState({});
+
+  const [editProfile, setEditProfile] = useState({ firstName: "", lastName: "", phone: "", password: "" });
+  const [profileEditing, setProfileEditing] = useState(false);
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(splashScale, { toValue: 1, useNativeDriver: true, tension: 60, friction: 7 }),
+      Animated.timing(splashOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+    ]).start();
+
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(splashOpacity, { toValue: 0, duration: 500, useNativeDriver: true }),
+        Animated.timing(splashScale, { toValue: 1.1, duration: 500, useNativeDriver: true }),
+      ]).start(() => {
+        loadInitialData();
+      });
+    }, 2000);
+  }, []);
+
+  const loadInitialData = async () => {
+    try {
+      const storedUsers = await AsyncStorage.getItem(STORAGE_KEYS.USERS);
+      if (storedUsers) setUsers(JSON.parse(storedUsers));
+
+      const storedTheme = await AsyncStorage.getItem(STORAGE_KEYS.THEME);
+      if (storedTheme !== null) setIsDark(JSON.parse(storedTheme));
+
+      const storedLoggedUser = await AsyncStorage.getItem(STORAGE_KEYS.LOGGED_USER);
+      if (storedLoggedUser) {
+        const user = JSON.parse(storedLoggedUser);
+        setLoggedUser(user);
+        setIsLogged(true);
+        const storedCart = await AsyncStorage.getItem(`${STORAGE_KEYS.CART}:${user.email}`);
+        if (storedCart) setCart(JSON.parse(storedCart));
+        const storedHistory = await AsyncStorage.getItem(`${STORAGE_KEYS.PURCHASE_HISTORY}:${user.email}`);
+        if (storedHistory) setPurchaseHistory(JSON.parse(storedHistory));
+        const storedWishlist = await AsyncStorage.getItem(`${STORAGE_KEYS.WISHLIST}:${user.email}`);
+        if (storedWishlist) setWishlist(JSON.parse(storedWishlist));
+        const storedRatings = await AsyncStorage.getItem(`${STORAGE_KEYS.RATINGS}:${user.email}`);
+        if (storedRatings) setRatings(JSON.parse(storedRatings));
+        setScreen("home");
+      } else {
+        setScreen("login");
+      }
+    } catch (e) {
+      console.log(e);
+      setScreen("login");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveUsers = async (u) => { try { await AsyncStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(u)); } catch (e) { } };
+  const saveCart = async (c, email) => { try { await AsyncStorage.setItem(`${STORAGE_KEYS.CART}:${email}`, JSON.stringify(c)); } catch (e) { } };
+  const saveLoggedUser = async (u) => { try { await AsyncStorage.setItem(STORAGE_KEYS.LOGGED_USER, JSON.stringify(u)); } catch (e) { } };
+  const saveHistory = async (h, email) => { try { await AsyncStorage.setItem(`${STORAGE_KEYS.PURCHASE_HISTORY}:${email}`, JSON.stringify(h)); } catch (e) { } };
+  const saveWishlist = async (w, email) => { try { await AsyncStorage.setItem(`${STORAGE_KEYS.WISHLIST}:${email}`, JSON.stringify(w)); } catch (e) { } };
+  const saveRatings = async (r, email) => { try { await AsyncStorage.setItem(`${STORAGE_KEYS.RATINGS}:${email}`, JSON.stringify(r)); } catch (e) { } };
+  const saveTheme = async (val) => { try { await AsyncStorage.setItem(STORAGE_KEYS.THEME, JSON.stringify(val)); } catch (e) { } };
+
+  const toggleTheme = async () => {
+    const next = !isDark;
+    setIsDark(next);
+    await saveTheme(next);
+  };
+
+  const formatCPF = (v) => v.replace(/\D/g, "").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+  const formatPhone = (v) => v.replace(/\D/g, "").replace(/(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d)/, "$1-$2").replace(/(-\d{4})\d+?$/, "$1");
+
+  const getTotal = () => cart.reduce((t, i) => t + i.price, 0);
+  const generatePixKey = () => setPixKey("PIX-" + Math.random().toString(36).substring(2, 15).toUpperCase());
+  const generateGameKey = () => Math.random().toString(36).substring(2, 8).toUpperCase() + "-" + Math.random().toString(36).substring(2, 8).toUpperCase();
+  const getCurrentDateTime = () => new Date().toLocaleString("pt-BR");
+
+  const sendPaymentNotification = async () => {
+    try {
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status === "granted") {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "✅ Pagamento aprovado!",
+            body: "Sua compra foi realizada com sucesso. Confira as chaves dos jogos.",
+          },
+          trigger: null,
+        });
+      }
+    } catch (e) { }
+  };
+
+  const confirmPayment = async () => {
+    const keys = cart.map((g) => ({ game: g.name, key: generateGameKey(), gameId: g.id }));
+    const newEntry = { date: getCurrentDateTime(), items: keys, total: getTotal() };
+    const updatedHistory = [newEntry, ...purchaseHistory];
+    setPurchaseKeys(keys);
+    setPurchaseDate(getCurrentDateTime());
+    setPurchaseHistory(updatedHistory);
+    await saveHistory(updatedHistory, loggedUser.email);
+    setCart([]);
+    await saveCart([], loggedUser.email);
+    await sendPaymentNotification();
+    setScreen("success");
+    Alert.alert("Pagamento aprovado!", "Compra realizada com sucesso");
+  };
+
+  const handleRegister = async () => {
+    const { firstName, lastName, cpf, phone, email, password } = registerData;
+    if (!firstName || !lastName || !cpf || !phone || !email || !password) { Alert.alert("Erro", "Preencha todos os campos"); return; }
+    if (users.find(u => u.email === email)) { Alert.alert("Erro", "Email já cadastrado"); return; }
+    const updated = [...users, registerData];
+    setUsers(updated);
+    await saveUsers(updated);
+    Alert.alert("Sucesso", "Conta criada!");
+    setRegisterData({ firstName: "", lastName: "", cpf: "", phone: "", email: "", password: "" });
+    setScreen("login");
+  };
+
+  const handleLogin = async () => {
+    const found = users.find(u => u.email === loginData.email && u.password === loginData.password);
+    if (found) {
+      setLoggedUser(found);
+      setIsLogged(true);
+      await saveLoggedUser(found);
+      const storedCart = await AsyncStorage.getItem(`${STORAGE_KEYS.CART}:${found.email}`);
+      setCart(storedCart ? JSON.parse(storedCart) : []);
+      const storedHistory = await AsyncStorage.getItem(`${STORAGE_KEYS.PURCHASE_HISTORY}:${found.email}`);
+      setPurchaseHistory(storedHistory ? JSON.parse(storedHistory) : []);
+      const storedWishlist = await AsyncStorage.getItem(`${STORAGE_KEYS.WISHLIST}:${found.email}`);
+      setWishlist(storedWishlist ? JSON.parse(storedWishlist) : []);
+      const storedRatings = await AsyncStorage.getItem(`${STORAGE_KEYS.RATINGS}:${found.email}`);
+      setRatings(storedRatings ? JSON.parse(storedRatings) : {});
+      setScreen("home");
+    } else {
+      Alert.alert("Erro", "Email ou senha inválidos");
+    }
+  };
+
+  const executeLogout = async () => {
+    try { await AsyncStorage.removeItem(STORAGE_KEYS.LOGGED_USER); } catch (e) { }
+    setShowLogoutModal(false);
+    setIsLogged(false);
+    setLoggedUser(null);
+    setCart([]);
+    setPurchaseHistory([]);
+    setWishlist([]);
+    setRatings({});
+    setPaymentMethod("");
+    setPixKey("");
+    setPurchaseKeys([]);
+    setPurchaseDate("");
+    setCardData({ cardName: "", cardNumber: "", expiry: "", cvv: "" });
+    setLoginData({ email: "", password: "" });
+    setScreen("login");
+  };
+
+  const addToCart = async (item) => {
+    const updated = [...cart, item];
+    setCart(updated);
+    await saveCart(updated, loggedUser.email);
+    Alert.alert("Carrinho", `${item.name} adicionado!`);
+  };
+
+  const removeFromCart = async (index) => {
+    const updated = cart.filter((_, i) => i !== index);
+    setCart(updated);
+    await saveCart(updated, loggedUser.email);
+  };
+
+  const toggleWishlist = async (game) => {
+    const exists = wishlist.find(w => w.id === game.id);
+    const updated = exists ? wishlist.filter(w => w.id !== game.id) : [...wishlist, game];
+    setWishlist(updated);
+    await saveWishlist(updated, loggedUser.email);
+  };
+
+  const rateGame = async (gameId, stars) => {
+    const updated = { ...ratings, [gameId]: stars };
+    setRatings(updated);
+    await saveRatings(updated, loggedUser.email);
+  };
+
+  const getPurchasedGameIds = () => {
+    const ids = new Set();
+    purchaseHistory.forEach(entry => entry.items.forEach(item => ids.add(item.gameId)));
+    return ids;
+  };
+
+  const handleAdminLogin = () => {
+    if (adminPassword === ADMIN_PASSWORD) {
+      setShowAdminModal(false);
+      setAdminPassword("");
+      setAdminPasswordError(false);
+      setScreen("admin");
+    } else {
+      setAdminPasswordError(true);
+    }
+  };
+
+  const handleAdminModalClose = () => {
+    setShowAdminModal(false);
+    setAdminPassword("");
+    setAdminPasswordError(false);
+  };
+
+  const adminAddUser = async () => {
+    const { firstName, lastName, email, password } = newUser;
+    if (!firstName || !lastName || !email || !password) { Alert.alert("Erro", "Preencha nome, email e senha"); return; }
+    if (users.find(u => u.email === email)) { Alert.alert("Erro", "Email já cadastrado"); return; }
+    const updated = [...users, newUser];
+    setUsers(updated);
+    await saveUsers(updated);
+    setNewUser({ firstName: "", lastName: "", cpf: "", phone: "", email: "", password: "" });
+    setShowNewUserForm(false);
+    Alert.alert("Sucesso", "Usuário adicionado!");
+  };
+
+  const adminDeleteUser = async (email) => {
+    const updated = users.filter(u => u.email !== email);
+    setUsers(updated);
+    await saveUsers(updated);
+    await AsyncStorage.removeItem(`${STORAGE_KEYS.CART}:${email}`);
+  };
+
+  const adminAddGame = () => {
+    if (!newGame.name || !newGame.company || !newGame.price) { Alert.alert("Erro", "Preencha nome, empresa e preço"); return; }
+    const game = {
+      id: Date.now().toString(),
+      name: newGame.name,
+      company: newGame.company,
+      price: parseFloat(newGame.price),
+      trailer: newGame.trailer || "https://youtube.com",
+      description: newGame.description || "Sem descrição.",
+      image: require("./assets/gtav.PNG"),
+    };
+    setGames(prev => [...prev, game]);
+    setNewGame({ name: "", company: "", price: "", trailer: "", description: "" });
+    setShowNewGameForm(false);
+    Alert.alert("Sucesso", "Jogo adicionado!");
+  };
+
+  const adminDeleteGame = (id) => {
+    setGames(prev => prev.filter(g => g.id !== id));
+  };
+
+  const adminSaveEditGame = () => {
+    if (!editingGame) return;
+    setGames(prev => prev.map(g => g.id === editingGame.id ? {
+      ...g,
+      name: editingGame.name,
+      company: editingGame.company,
+      price: parseFloat(editingGame.price) || g.price,
+      trailer: editingGame.trailer,
+      description: editingGame.description,
+    } : g));
+    setEditingGame(null);
+    Alert.alert("Sucesso", "Jogo atualizado!");
+  };
+
+  const saveProfile = async () => {
+    if (!editProfile.firstName || !editProfile.lastName) { Alert.alert("Erro", "Nome e sobrenome são obrigatórios"); return; }
+    const updated = {
+      ...loggedUser,
+      firstName: editProfile.firstName,
+      lastName: editProfile.lastName,
+      phone: editProfile.phone || loggedUser.phone,
+      password: editProfile.password || loggedUser.password,
+    };
+    const updatedUsers = users.map(u => u.email === loggedUser.email ? updated : u);
+    setLoggedUser(updated);
+    setUsers(updatedUsers);
+    await saveLoggedUser(updated);
+    await saveUsers(updatedUsers);
+    setProfileEditing(false);
+    Alert.alert("Sucesso", "Perfil atualizado!");
+  };
+
+  const t = theme;
+
+  const SplashScreen = () => (
+    <View style={[styles.splashContainer, { backgroundColor: "#020617" }]}>
+      <Animated.View style={{ opacity: splashOpacity, transform: [{ scale: splashScale }], alignItems: "center" }}>
+        <Image source={require("./assets/logo.png")} style={styles.splashLogo} />
+        <Text style={styles.splashTitle}>Pixel Store</Text>
+        <ActivityIndicator color="#38bdf8" style={{ marginTop: 32 }} />
+      </Animated.View>
+    </View>
+  );
+
+  const Home = () => (
+    <View style={{ flex: 1, backgroundColor: t.bg }}>
+      <View style={[styles.header, { backgroundColor: t.header, borderBottomColor: t.border, borderBottomWidth: 1 }]}>
+        <View style={styles.headerLeft}>
+          <Image source={require("./assets/logo.png")} style={styles.headerLogo} />
+          <Text style={[styles.headerTitle, { color: t.accent }]}>Pixel Store</Text>
+        </View>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={[styles.adminBtn, { backgroundColor: "#4f46e5" }]} onPress={() => setShowAdminModal(true)}>
+            <Text style={styles.adminBtnText}>⚙️</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.cartButton, { backgroundColor: "#2563eb" }]} onPress={() => setScreen("cart")}>
+            <Text style={styles.cartText}>🛒 {cart.length}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.logoutButton, { backgroundColor: "#7f1d1d" }]} onPress={() => setShowLogoutModal(true)}>
+            <Text style={styles.logoutText}>Sair</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {loggedUser && (
+        <View style={[styles.welcomeBar, { backgroundColor: t.header, borderBottomColor: t.border, borderBottomWidth: 1 }]}>
+          <Text style={[styles.welcomeText, { color: t.subtext }]}>Olá, {loggedUser.firstName}! 👋</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Text style={{ color: t.muted, fontSize: 12 }}>{isDark ? "🌙" : "☀️"}</Text>
+            <Switch
+              value={!isDark}
+              onValueChange={toggleTheme}
+              trackColor={{ false: "#334155", true: "#bfdbfe" }}
+              thumbColor={isDark ? "#64748b" : "#2563eb"}
+              style={{ transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
+            />
+            <TouchableOpacity onPress={() => { setEditProfile({ firstName: loggedUser.firstName, lastName: loggedUser.lastName, phone: loggedUser.phone || "", password: "" }); setScreen("profile"); }}>
+              <View style={[styles.miniAvatar, { backgroundColor: "#2563eb" }]}>
+                <Text style={styles.miniAvatarText}>{loggedUser.firstName[0]}{loggedUser.lastName?.[0] || ""}</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <View style={[styles.quickNav, { backgroundColor: t.header, borderBottomColor: t.border, borderBottomWidth: 1 }]}>
+        <TouchableOpacity style={styles.quickNavItem} onPress={() => setScreen("wishlist")}>
+          <Text style={[styles.quickNavText, { color: t.subtext }]}>❤️ Lista de desejos</Text>
+          {wishlist.length > 0 && <View style={styles.badge}><Text style={styles.badgeText}>{wishlist.length}</Text></View>}
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.quickNavItem} onPress={() => setScreen("history")}>
+          <Text style={[styles.quickNavText, { color: t.subtext }]}>🕓 Histórico</Text>
+          {purchaseHistory.length > 0 && <View style={styles.badge}><Text style={styles.badgeText}>{purchaseHistory.length}</Text></View>}
+        </TouchableOpacity>
+      </View>
+
+      <FlatList
+        data={games}
+        keyExtractor={item => item.id}
+        numColumns={2}
+        contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 8, paddingTop: 8 }}
+        renderItem={({ item }) => {
+          const inWishlist = wishlist.find(w => w.id === item.id);
+          return (
+            <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border }]}>
+              <Image source={item.image} style={styles.image} />
+              <TouchableOpacity style={styles.wishlistHeart} onPress={() => toggleWishlist(item)}>
+                <Text style={{ fontSize: 18 }}>{inWishlist ? "❤️" : "🤍"}</Text>
+              </TouchableOpacity>
+              <View style={styles.cardInfo}>
+                <Text style={[styles.gameTitle, { color: t.text }]} numberOfLines={1}>{item.name}</Text>
+                <Text style={[styles.company, { color: t.muted }]} numberOfLines={1}>{item.company}</Text>
+                <Text style={[styles.price, { color: t.success }]}>R$ {item.price.toFixed(2)}</Text>
+              </View>
+              <View style={[styles.cardButtons, { borderTopColor: t.border }]}>
+                <TouchableOpacity style={styles.btnAdd} onPress={() => addToCart(item)}>
+                  <Text style={styles.btnText}>+ Carrinho</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.btnAbout, { backgroundColor: t.input }]} onPress={() => { setSelectedGame(item); setScreen("details"); }}>
+                  <Text style={[styles.btnTextDark, { color: t.subtext }]}>Sobre</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        }}
+      />
+    </View>
+  );
+
+  const ProfileScreen = () => (
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }}>
+      <BackButton onPress={() => setScreen("home")} dark={!isDark} />
+      <View style={styles.detailsContainer}>
+        <View style={{ alignItems: "center", marginBottom: 24 }}>
+          <View style={[styles.profileAvatar, { backgroundColor: "#2563eb" }]}>
+            <Text style={styles.profileAvatarText}>{loggedUser.firstName[0]}{loggedUser.lastName?.[0] || ""}</Text>
+          </View>
+          <Text style={[styles.detailsTitle, { color: t.text, textAlign: "center", marginTop: 12 }]}>{loggedUser.firstName} {loggedUser.lastName}</Text>
+          <Text style={[styles.detailsCompany, { color: t.subtext }]}>{loggedUser.email}</Text>
+        </View>
+
+        {!profileEditing ? (
+          <>
+            <View style={[styles.profileInfoBox, { backgroundColor: t.card, borderColor: t.border }]}>
+              <View style={styles.adminRow}>
+                <Text style={[styles.adminLabel, { color: t.muted }]}>CPF</Text>
+                <Text style={[styles.adminValue, { color: t.text }]}>{loggedUser.cpf || "—"}</Text>
+              </View>
+              <View style={styles.adminRow}>
+                <Text style={[styles.adminLabel, { color: t.muted }]}>Celular</Text>
+                <Text style={[styles.adminValue, { color: t.text }]}>{loggedUser.phone || "—"}</Text>
+              </View>
+              <View style={[styles.adminRow, { borderBottomWidth: 0 }]}>
+                <Text style={[styles.adminLabel, { color: t.muted }]}>Email</Text>
+                <Text style={[styles.adminValue, { color: t.text }]}>{loggedUser.email}</Text>
+              </View>
+            </View>
+            <TouchableOpacity style={[styles.buyBigButton, { backgroundColor: "#2563eb", marginTop: 16 }]} onPress={() => { setEditProfile({ firstName: loggedUser.firstName, lastName: loggedUser.lastName, phone: loggedUser.phone || "", password: "" }); setProfileEditing(true); }}>
+              <Text style={styles.buyBigText}>✏️ Editar perfil</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <View style={[styles.adminForm, { backgroundColor: t.card, borderColor: t.border }]}>
+            <Text style={[styles.adminFormTitle, { color: t.text }]}>Editar informações</Text>
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Nome *" placeholderTextColor={t.placeholder} value={editProfile.firstName} onChangeText={v => setEditProfile(p => ({ ...p, firstName: v }))} />
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Sobrenome *" placeholderTextColor={t.placeholder} value={editProfile.lastName} onChangeText={v => setEditProfile(p => ({ ...p, lastName: v }))} />
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Celular" placeholderTextColor={t.placeholder} keyboardType="numeric" value={editProfile.phone} onChangeText={v => setEditProfile(p => ({ ...p, phone: formatPhone(v) }))} />
+            <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Nova senha (deixe em branco para manter)" placeholderTextColor={t.placeholder} secureTextEntry value={editProfile.password} onChangeText={v => setEditProfile(p => ({ ...p, password: v }))} />
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TouchableOpacity style={[styles.modalCancel, { flex: 1, backgroundColor: t.inputAlt }]} onPress={() => setProfileEditing(false)}>
+                <Text style={[styles.modalCancelText, { color: t.text }]}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.adminSaveBtn, { flex: 1 }]} onPress={saveProfile}>
+                <Text style={styles.adminSaveBtnText}>✔ Salvar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </View>
+    </ScrollView>
+  );
+
+  const WishlistScreen = () => (
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }}>
+      <BackButton onPress={() => setScreen("home")} dark={!isDark} />
+      <View style={styles.detailsContainer}>
+        <Text style={[styles.detailsTitle, { color: t.text }]}>❤️ Lista de Desejos</Text>
+        {wishlist.length === 0 ? (
+          <Text style={[styles.description, { color: t.subtext, marginTop: 24 }]}>Você ainda não adicionou jogos à lista de desejos.</Text>
+        ) : (
+          wishlist.map((item, index) => (
+            <View key={index} style={[styles.cartItem, { backgroundColor: t.card, borderColor: t.border }]}>
+              <Image source={item.image} style={{ width: 56, height: 56, borderRadius: 10, marginRight: 12 }} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.gameTitle, { color: t.text }]}>{item.name}</Text>
+                <Text style={[styles.company, { color: t.muted }]}>{item.company}</Text>
+                <Text style={[styles.price, { color: t.success }]}>R$ {item.price.toFixed(2)}</Text>
+              </View>
+              <View style={{ gap: 6 }}>
+                <TouchableOpacity style={styles.btnAdd} onPress={() => addToCart(item)}>
+                  <Text style={[styles.btnText, { fontSize: 11 }]}>+ Cart</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.removeButton, { width: 32, height: 32, borderRadius: 16 }]} onPress={() => toggleWishlist(item)}>
+                  <Text style={styles.removeText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
+        )}
+      </View>
+    </ScrollView>
+  );
+
+  const HistoryScreen = () => {
+    const purchasedIds = getPurchasedGameIds();
+    return (
+      <ScrollView style={{ flex: 1, backgroundColor: t.bg }}>
+        <BackButton onPress={() => setScreen("home")} dark={!isDark} />
+        <View style={styles.detailsContainer}>
+          <Text style={[styles.detailsTitle, { color: t.text }]}>🕓 Histórico de Compras</Text>
+          {purchaseHistory.length === 0 ? (
+            <Text style={[styles.description, { color: t.subtext, marginTop: 24 }]}>Você ainda não realizou nenhuma compra.</Text>
+          ) : (
+            purchaseHistory.map((entry, index) => (
+              <View key={index} style={[styles.keyBox, { backgroundColor: t.card, borderColor: t.border, marginBottom: 16 }]}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 10 }}>
+                  <Text style={[styles.sectionTitle, { color: t.text, marginTop: 0, fontSize: 14 }]}>Compra #{purchaseHistory.length - index}</Text>
+                  <Text style={[styles.company, { color: t.muted }]}>{entry.date}</Text>
+                </View>
+                {entry.items.map((item, i) => {
+                  const gameRating = ratings[item.gameId] || 0;
+                  return (
+                    <View key={i} style={{ marginBottom: 12 }}>
+                      <Text style={[styles.gameTitle, { color: t.text }]}>{item.game}</Text>
+                      <Text style={[styles.gameKey, { color: t.accent, fontSize: 13 }]}>{item.key}</Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+                        <Text style={[styles.company, { color: t.muted }]}>Sua nota:</Text>
+                        <StarRating rating={gameRating} onRate={(stars) => rateGame(item.gameId, stars)} size={18} />
+                      </View>
+                    </View>
+                  );
+                })}
+                <View style={[styles.adminCardDivider, { backgroundColor: t.border, marginTop: 4 }]} />
+                <Text style={[styles.totalPrice, { color: t.success, fontSize: 16, textAlign: "right", marginTop: 8 }]}>Total: R$ {entry.total.toFixed(2)}</Text>
+              </View>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    );
+  };
+
+  const AdminScreen = () => (
+    <View style={{ flex: 1, backgroundColor: t.bg }}>
+      <View style={[styles.adminHeader, { backgroundColor: t.header, borderBottomColor: t.border }]}>
+        <TouchableOpacity onPress={() => setScreen("home")}>
+          <Text style={[styles.backText, { color: t.accent }]}>← Sair do Admin</Text>
+        </TouchableOpacity>
+        <Text style={[styles.adminHeaderTitle, { color: t.text }]}>⚙️ Admin</Text>
+      </View>
+
+      <View style={[styles.adminTabs, { backgroundColor: t.header, borderBottomColor: t.border }]}>
+        <TouchableOpacity style={[styles.adminTab, adminTab === "users" && styles.adminTabActive]} onPress={() => setAdminTab("users")}>
+          <Text style={[styles.adminTabText, { color: t.muted }, adminTab === "users" && { color: t.text }]}>👤 Usuários ({users.length})</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.adminTab, adminTab === "games" && styles.adminTabActive]} onPress={() => setAdminTab("games")}>
+          <Text style={[styles.adminTabText, { color: t.muted }, adminTab === "games" && { color: t.text }]}>🎮 Jogos ({games.length})</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
+        {adminTab === "users" && (
+          <>
+            <TouchableOpacity style={styles.adminAddBtn} onPress={() => setShowNewUserForm(!showNewUserForm)}>
+              <Text style={styles.adminAddBtnText}>{showNewUserForm ? "✕ Fechar" : "+ Adicionar usuário"}</Text>
+            </TouchableOpacity>
+            {showNewUserForm && (
+              <View style={[styles.adminForm, { backgroundColor: t.card, borderColor: t.border }]}>
+                <Text style={[styles.adminFormTitle, { color: t.text }]}>Novo Usuário</Text>
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Nome *" placeholderTextColor={t.placeholder} value={newUser.firstName} onChangeText={v => setNewUser(p => ({ ...p, firstName: v }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Sobrenome *" placeholderTextColor={t.placeholder} value={newUser.lastName} onChangeText={v => setNewUser(p => ({ ...p, lastName: v }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="CPF" placeholderTextColor={t.placeholder} keyboardType="numeric" value={newUser.cpf} onChangeText={v => setNewUser(p => ({ ...p, cpf: formatCPF(v) }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Celular" placeholderTextColor={t.placeholder} keyboardType="numeric" value={newUser.phone} onChangeText={v => setNewUser(p => ({ ...p, phone: formatPhone(v) }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Email *" placeholderTextColor={t.placeholder} autoCapitalize="none" keyboardType="email-address" value={newUser.email} onChangeText={v => setNewUser(p => ({ ...p, email: v }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Senha *" placeholderTextColor={t.placeholder} secureTextEntry value={newUser.password} onChangeText={v => setNewUser(p => ({ ...p, password: v }))} />
+                <TouchableOpacity style={styles.adminSaveBtn} onPress={adminAddUser}>
+                  <Text style={styles.adminSaveBtnText}>✔ Salvar Usuário</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {users.length === 0 && (
+              <View style={[styles.adminEmpty, { backgroundColor: t.card, borderColor: t.border }]}>
+                <Text style={[styles.adminEmptyText, { color: t.muted }]}>Nenhum usuário cadastrado.</Text>
+              </View>
+            )}
+            {users.map((u, i) => (
+              <View key={i} style={[styles.adminCard, { backgroundColor: t.card, borderColor: t.border }]}>
+                <View style={styles.adminCardTop}>
+                  <View style={[styles.adminAvatar, { backgroundColor: "#2563eb" }]}>
+                    <Text style={styles.adminAvatarText}>{u.firstName[0]}{u.lastName?.[0] || ""}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.adminCardName, { color: t.text }]}>{u.firstName} {u.lastName}</Text>
+                    <Text style={[styles.adminCardSub, { color: t.muted }]}>{u.email}</Text>
+                  </View>
+                  <TouchableOpacity style={styles.adminDeleteBtn} onPress={() => adminDeleteUser(u.email)}>
+                    <Text style={styles.adminDeleteText}>🗑️</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={[styles.adminCardDivider, { backgroundColor: t.border }]} />
+                <View style={styles.adminRow}><Text style={[styles.adminLabel, { color: t.muted }]}>CPF</Text><Text style={[styles.adminValue, { color: t.text }]}>{u.cpf || "—"}</Text></View>
+                <View style={styles.adminRow}><Text style={[styles.adminLabel, { color: t.muted }]}>Celular</Text><Text style={[styles.adminValue, { color: t.text }]}>{u.phone || "—"}</Text></View>
+                <View style={[styles.adminRow, { borderBottomWidth: 0 }]}><Text style={[styles.adminLabel, { color: t.muted }]}>Senha</Text><Text style={[styles.adminValue, { color: t.text }]}>{u.password}</Text></View>
+              </View>
+            ))}
+          </>
+        )}
+
+        {adminTab === "games" && (
+          <>
+            <TouchableOpacity style={styles.adminAddBtn} onPress={() => setShowNewGameForm(!showNewGameForm)}>
+              <Text style={styles.adminAddBtnText}>{showNewGameForm ? "✕ Fechar" : "+ Adicionar jogo"}</Text>
+            </TouchableOpacity>
+            {showNewGameForm && (
+              <View style={[styles.adminForm, { backgroundColor: t.card, borderColor: t.border }]}>
+                <Text style={[styles.adminFormTitle, { color: t.text }]}>Novo Jogo</Text>
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Nome do jogo *" placeholderTextColor={t.placeholder} value={newGame.name} onChangeText={v => setNewGame(p => ({ ...p, name: v }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Empresa *" placeholderTextColor={t.placeholder} value={newGame.company} onChangeText={v => setNewGame(p => ({ ...p, company: v }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Preço (ex: 99.90) *" placeholderTextColor={t.placeholder} keyboardType="numeric" value={newGame.price} onChangeText={v => setNewGame(p => ({ ...p, price: v }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text }]} placeholder="Link do trailer (YouTube)" placeholderTextColor={t.placeholder} value={newGame.trailer} onChangeText={v => setNewGame(p => ({ ...p, trailer: v }))} />
+                <TextInput style={[styles.adminInput, { backgroundColor: t.input, color: t.text, height: 80, textAlignVertical: "top" }]} placeholder="Descrição" placeholderTextColor={t.placeholder} multiline value={newGame.description} onChangeText={v => setNewGame(p => ({ ...p, description: v }))} />
+                <Text style={[styles.adminNote, { color: t.muted }]}>* A imagem usará a capa padrão.</Text>
+                <TouchableOpacity style={styles.adminSaveBtn} onPress={adminAddGame}>
+                  <Text style={styles.adminSaveBtnText}>✔ Salvar Jogo</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            {games.map((g, i) => (
+              <View key={i} style={[styles.adminGameCard, { backgroundColor: t.card, borderColor: t.border }]}>
+                <Image source={g.image} style={styles.adminGameImage} />
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={[styles.adminCardName, { color: t.text }]}>{g.name}</Text>
+                  <Text style={[styles.adminCardSub, { color: t.muted }]}>{g.company}</Text>
+                  <Text style={[styles.adminGamePrice, { color: t.success }]}>R$ {g.price.toFixed(2)}</Text>
+                  <View style={styles.adminGameButtons}>
+                    <TouchableOpacity style={[styles.adminEditBtn, { backgroundColor: t.input }]} onPress={() => setEditingGame({ ...g, price: String(g.price) })}>
+                      <Text style={[styles.adminEditText, { color: t.text }]}>✏️ Editar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.adminDeleteBtn} onPress={() => adminDeleteGame(g.id)}>
+                      <Text style={styles.adminDeleteText}>🗑️</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </>
+        )}
+      </ScrollView>
+    </View>
+  );
+
+  const DetailsScreen = () => {
+    const inWishlist = wishlist.find(w => w.id === selectedGame.id);
+    const gameRating = ratings[selectedGame.id] || 0;
+    const purchased = getPurchasedGameIds().has(selectedGame.id);
+    return (
+      <ScrollView style={{ flex: 1, backgroundColor: t.bg }}>
+        <BackButton onPress={() => setScreen("home")} dark={!isDark} />
+        <Image source={selectedGame.image} style={styles.detailsImage} />
+        <View style={styles.detailsContainer}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <Text style={[styles.detailsTitle, { color: t.text, flex: 1 }]}>{selectedGame.name}</Text>
+            <TouchableOpacity onPress={() => toggleWishlist(selectedGame)} style={{ paddingLeft: 12, paddingTop: 4 }}>
+              <Text style={{ fontSize: 26 }}>{inWishlist ? "❤️" : "🤍"}</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.detailsCompany, { color: t.accent }]}>Desenvolvido por {selectedGame.company}</Text>
+          {purchased && (
+            <View style={{ marginTop: 16 }}>
+              <Text style={[styles.sectionTitle, { color: t.text }]}>Sua avaliação</Text>
+              <StarRating rating={gameRating} onRate={(stars) => rateGame(selectedGame.id, stars)} size={28} />
+            </View>
+          )}
+          <Text style={[styles.sectionTitle, { color: t.text }]}>Sobre o jogo</Text>
+          <Text style={[styles.description, { color: t.subtext }]}>{selectedGame.description}</Text>
+          <Text style={[styles.sectionTitle, { color: t.text }]}>Trailer</Text>
+          <TouchableOpacity style={[styles.trailerBox, { backgroundColor: t.card, borderColor: t.border }]} onPress={() => Linking.openURL(selectedGame.trailer)}>
+            <Text style={[styles.trailerText, { color: t.text }]}>🎬 Ver trailer oficial no YouTube</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.buyBigButton} onPress={() => addToCart(selectedGame)}>
+            <Text style={styles.buyBigText}>Comprar por R$ {selectedGame.price.toFixed(2)}</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  };
+
+  const CartScreen = () => (
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }}>
+      <BackButton onPress={() => setScreen("home")} dark={!isDark} />
+      <View style={styles.detailsContainer}>
+        <Text style={[styles.detailsTitle, { color: t.text }]}>Resumo da Compra</Text>
+        {cart.length === 0 ? (
+          <Text style={[styles.description, { color: t.subtext }]}>Seu carrinho está vazio.</Text>
+        ) : (
+          <>
+            {cart.map((item, index) => (
+              <View key={index} style={[styles.cartItem, { backgroundColor: t.card, borderColor: t.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.gameTitle, { color: t.text }]}>{item.name}</Text>
+                  <Text style={[styles.price, { color: t.success }]}>R$ {item.price.toFixed(2)}</Text>
+                </View>
+                <TouchableOpacity style={styles.removeButton} onPress={() => removeFromCart(index)}>
+                  <Text style={styles.removeText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+            <View style={styles.totalBox}>
+              <Text style={[styles.totalText, { color: t.text }]}>Total:</Text>
+              <Text style={[styles.totalPrice, { color: t.success }]}>R$ {getTotal().toFixed(2)}</Text>
+            </View>
+            <TouchableOpacity style={styles.buyBigButton} onPress={() => setScreen("payment")}>
+              <Text style={styles.buyBigText}>Ir para pagamento</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </ScrollView>
+  );
+
+  const PaymentScreen = () => (
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }}>
+      <BackButton onPress={() => setScreen("cart")} dark={!isDark} />
+      <View style={styles.detailsContainer}>
+        <Text style={[styles.detailsTitle, { color: t.text }]}>Pagamento</Text>
+        <TouchableOpacity style={styles.paymentButton} onPress={() => { setPaymentMethod("pix"); generatePixKey(); }}>
+          <Text style={styles.buttonText}>PIX</Text>
+        </TouchableOpacity>
+        {paymentMethod === "pix" && (
+          <View style={[styles.paymentBox, { backgroundColor: t.card, borderColor: t.border }]}>
+            <Text style={[styles.sectionTitle, { color: t.text }]}>Chave Pix</Text>
+            <Text style={[styles.pixKey, { color: t.success }]}>{pixKey}</Text>
+            <TouchableOpacity style={styles.buyBigButton} onPress={confirmPayment}>
+              <Text style={styles.buyBigText}>Confirmar Pagamento</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <TouchableOpacity style={styles.paymentButton} onPress={() => setPaymentMethod("card")}>
+          <Text style={styles.buttonText}>Cartão de Crédito</Text>
+        </TouchableOpacity>
+        {paymentMethod === "card" && (
+          <View style={[styles.paymentBox, { backgroundColor: t.card, borderColor: t.border }]}>
+            <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Nome no cartão" placeholderTextColor={t.placeholder} value={cardData.cardName} onChangeText={v => setCardData(p => ({ ...p, cardName: v }))} />
+            <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Número do cartão" keyboardType="numeric" placeholderTextColor={t.placeholder} value={cardData.cardNumber} onChangeText={v => setCardData(p => ({ ...p, cardNumber: v }))} />
+            <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Validade" placeholderTextColor={t.placeholder} value={cardData.expiry} onChangeText={v => setCardData(p => ({ ...p, expiry: v }))} />
+            <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="CVV" keyboardType="numeric" secureTextEntry placeholderTextColor={t.placeholder} value={cardData.cvv} onChangeText={v => setCardData(p => ({ ...p, cvv: v }))} />
+            <TouchableOpacity style={styles.buyBigButton} onPress={confirmPayment}>
+              <Text style={styles.buyBigText}>Confirmar Pagamento</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    </ScrollView>
+  );
+
+  const SuccessScreen = () => (
+    <ScrollView style={{ flex: 1, backgroundColor: t.bg }}>
+      <View style={styles.detailsContainer}>
+        <View style={styles.successHeader}>
+          <Image source={require("./assets/logo.png")} style={styles.successLogo} />
+          <Text style={[styles.successTitle, { color: t.success }]}>Pixel Store</Text>
+        </View>
+        <Text style={[styles.purchaseDate, { color: t.subtext }]}>Compra realizada em:</Text>
+        <Text style={[styles.purchaseDateValue, { color: t.text }]}>{purchaseDate}</Text>
+        {purchaseKeys.map((item, index) => (
+          <View key={index} style={[styles.keyBox, { backgroundColor: t.card, borderColor: t.border }]}>
+            <Text style={[styles.gameTitle, { color: t.text }]}>{item.game}</Text>
+            <Text style={[styles.gameKey, { color: t.accent }]}>{item.key}</Text>
+          </View>
+        ))}
+        <TouchableOpacity style={styles.buyBigButton} onPress={() => setScreen("home")}>
+          <Text style={styles.buyBigText}>Voltar para loja</Text>
+        </TouchableOpacity>
+      </View>
+    </ScrollView>
+  );
+
+  if (screen === "splash") {
+    return <SplashScreen />;
+  }
+
+  if (loading) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: t.bg, justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator size="large" color="#38bdf8" />
+        <Text style={{ color: "#38bdf8", marginTop: 12, fontSize: 16 }}>Carregando...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={[styles.container, { backgroundColor: t.bg }]}>
+      <LogoutModal visible={showLogoutModal} onClose={() => setShowLogoutModal(false)} onConfirm={executeLogout} theme={theme} />
+      <AdminModal visible={showAdminModal} adminPassword={adminPassword} setAdminPassword={setAdminPassword} adminPasswordError={adminPasswordError} setAdminPasswordError={setAdminPasswordError} onConfirm={handleAdminLogin} onClose={handleAdminModalClose} theme={theme} />
+      <EditGameModal editingGame={editingGame} setEditingGame={setEditingGame} onSave={adminSaveEditGame} theme={theme} />
+
+      {!isLogged && screen === "login" && (
+        <View style={[styles.loginContainer, { backgroundColor: t.bg }]}>
+          <View style={[styles.loginBox, { backgroundColor: t.card, borderColor: t.border }]}>
+            <Image source={require("./assets/logo.png")} style={styles.logo} />
+            <Text style={[styles.titleMain, { color: t.accent }]}>Pixel Store</Text>
+            <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Email" placeholderTextColor={t.placeholder} returnKeyType="next" autoCapitalize="none" keyboardType="email-address" value={loginData.email} onChangeText={v => setLoginData(p => ({ ...p, email: v }))} />
+            <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Senha" secureTextEntry placeholderTextColor={t.placeholder} returnKeyType="done" onSubmitEditing={handleLogin} value={loginData.password} onChangeText={v => setLoginData(p => ({ ...p, password: v }))} />
+            <TouchableOpacity style={styles.loginButton} onPress={handleLogin}>
+              <Text style={styles.buttonText}>Entrar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setScreen("register")}>
+              <Text style={[styles.link, { color: t.accent }]}>Criar conta</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {!isLogged && screen === "register" && (
+        <ScrollView style={{ backgroundColor: t.bg }}>
+          <BackButton onPress={() => setScreen("login")} dark={!isDark} />
+          <Text style={[styles.registerTitle, { color: t.text }]}>Cadastro</Text>
+          <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Nome" placeholderTextColor={t.placeholder} value={registerData.firstName} onChangeText={v => setRegisterData(p => ({ ...p, firstName: v }))} />
+          <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Sobrenome" placeholderTextColor={t.placeholder} value={registerData.lastName} onChangeText={v => setRegisterData(p => ({ ...p, lastName: v }))} />
+          <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="CPF" keyboardType="numeric" placeholderTextColor={t.placeholder} value={registerData.cpf} onChangeText={v => setRegisterData(p => ({ ...p, cpf: formatCPF(v) }))} />
+          <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Celular" keyboardType="numeric" placeholderTextColor={t.placeholder} value={registerData.phone} onChangeText={v => setRegisterData(p => ({ ...p, phone: formatPhone(v) }))} />
+          <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Email" placeholderTextColor={t.placeholder} autoCapitalize="none" keyboardType="email-address" value={registerData.email} onChangeText={v => setRegisterData(p => ({ ...p, email: v }))} />
+          <TextInput style={[styles.input, { backgroundColor: t.input, color: t.text }]} placeholder="Senha" secureTextEntry placeholderTextColor={t.placeholder} value={registerData.password} onChangeText={v => setRegisterData(p => ({ ...p, password: v }))} />
+          <TouchableOpacity style={styles.loginButton} onPress={handleRegister}>
+            <Text style={styles.buttonText}>Cadastrar</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+
+      {isLogged && screen === "home" && <Home />}
+      {isLogged && screen === "admin" && <AdminScreen />}
+      {isLogged && screen === "details" && <DetailsScreen />}
+      {isLogged && screen === "cart" && <CartScreen />}
+      {isLogged && screen === "payment" && <PaymentScreen />}
+      {isLogged && screen === "success" && <SuccessScreen />}
+      {isLogged && screen === "history" && <HistoryScreen />}
+      {isLogged && screen === "wishlist" && <WishlistScreen />}
+      {isLogged && screen === "profile" && <ProfileScreen />}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+
+  splashContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+  splashLogo: { width: 110, height: 110, resizeMode: "contain", marginBottom: 16 },
+  splashTitle: { color: "#38bdf8", fontSize: 38, fontWeight: "bold", letterSpacing: 1 },
+
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.75)", justifyContent: "center", alignItems: "center" },
+  modalBox: { borderRadius: 20, padding: 28, width: "82%", borderWidth: 1 },
+  modalTitle: { fontSize: 22, fontWeight: "bold", marginBottom: 8 },
+  modalMessage: { fontSize: 15, marginBottom: 18 },
+  modalButtons: { flexDirection: "row", gap: 12 },
+  modalCancel: { flex: 1, padding: 14, borderRadius: 12, alignItems: "center" },
+  modalCancelText: { fontWeight: "bold" },
+  modalConfirm: { flex: 1, backgroundColor: "#dc2626", padding: 14, borderRadius: 12, alignItems: "center" },
+  modalConfirmBlue: { flex: 1, backgroundColor: "#2563eb", padding: 14, borderRadius: 12, alignItems: "center" },
+  modalConfirmText: { color: "#fff", fontWeight: "bold" },
+  errorText: { color: "#dc2626", fontSize: 13, marginBottom: 10, marginLeft: 15 },
+
+  loginContainer: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 25 },
+  loginBox: { width: "100%", borderRadius: 20, padding: 25, borderWidth: 1 },
+  logo: { width: 80, height: 80, alignSelf: "center", marginBottom: 15, resizeMode: "contain" },
+  titleMain: { fontSize: 32, fontWeight: "bold", textAlign: "center", marginBottom: 25 },
+  input: { borderRadius: 12, padding: 15, marginHorizontal: 15, marginBottom: 15, fontSize: 16 },
+  loginButton: { backgroundColor: "#2563eb", padding: 16, borderRadius: 12, marginTop: 10, marginHorizontal: 15 },
+  buttonText: { color: "#fff", textAlign: "center", fontWeight: "bold", fontSize: 15 },
+  link: { textAlign: "center", marginTop: 20, fontWeight: "bold" },
+  registerTitle: { fontSize: 28, fontWeight: "bold", margin: 15 },
+
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12 },
+  headerLeft: { flexDirection: "row", alignItems: "center" },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  headerLogo: { width: 36, height: 36, resizeMode: "contain", marginRight: 8 },
+  headerTitle: { fontSize: 20, fontWeight: "bold" },
+  cartButton: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  cartText: { color: "#fff", fontWeight: "bold", fontSize: 13 },
+  logoutButton: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  logoutText: { color: "#fff", fontWeight: "bold", fontSize: 13 },
+  adminBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  adminBtnText: { fontSize: 15 },
+  welcomeBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 14, paddingVertical: 7 },
+  welcomeText: { fontSize: 13 },
+  miniAvatar: { width: 30, height: 30, borderRadius: 15, justifyContent: "center", alignItems: "center" },
+  miniAvatarText: { color: "#fff", fontWeight: "bold", fontSize: 12 },
+  quickNav: { flexDirection: "row", paddingHorizontal: 14, paddingVertical: 8, gap: 16 },
+  quickNavItem: { flexDirection: "row", alignItems: "center", gap: 4 },
+  quickNavText: { fontSize: 12, fontWeight: "600" },
+  badge: { backgroundColor: "#2563eb", borderRadius: 10, paddingHorizontal: 5, paddingVertical: 1 },
+  badgeText: { color: "#fff", fontSize: 10, fontWeight: "bold" },
+
+  card: { width: width / 2 - 14, margin: 5, borderRadius: 16, overflow: "hidden", borderWidth: 1 },
+  image: { width: "100%", height: 160, resizeMode: "cover" },
+  cardInfo: { paddingHorizontal: 10, paddingTop: 10, paddingBottom: 6 },
+  gameTitle: { fontSize: 14, fontWeight: "bold" },
+  company: { marginTop: 2, fontSize: 11 },
+  price: { fontSize: 16, fontWeight: "bold", marginTop: 4 },
+  cardButtons: { flexDirection: "row", borderTopWidth: 1 },
+  btnAdd: { flex: 1, backgroundColor: "#2563eb", paddingVertical: 10, alignItems: "center" },
+  btnAbout: { flex: 1, paddingVertical: 10, alignItems: "center" },
+  btnText: { color: "#fff", fontWeight: "bold", fontSize: 12 },
+  btnTextDark: { fontWeight: "bold", fontSize: 12 },
+  wishlistHeart: { position: "absolute", top: 8, right: 8, backgroundColor: "rgba(0,0,0,0.4)", borderRadius: 20, padding: 4 },
+
+  detailsImage: { width: "100%", height: 280, resizeMode: "cover" },
+  detailsContainer: { padding: 18 },
+  detailsTitle: { fontSize: 28, fontWeight: "bold" },
+  detailsCompany: { marginTop: 6, fontSize: 15 },
+  sectionTitle: { fontSize: 18, fontWeight: "bold", marginTop: 22, marginBottom: 8 },
+  description: { fontSize: 15, lineHeight: 23 },
+  trailerBox: { padding: 18, borderRadius: 12, borderWidth: 1 },
+  trailerText: { fontSize: 14 },
+  buyBigButton: { backgroundColor: "#16a34a", padding: 16, borderRadius: 12, marginTop: 24, marginBottom: 36 },
+  buyBigText: { color: "#fff", textAlign: "center", fontWeight: "bold", fontSize: 16 },
+  backButton: { margin: 15 },
+  backText: { color: "#38bdf8", fontSize: 15, fontWeight: "bold" },
+
+  cartItem: { padding: 14, borderRadius: 12, marginTop: 12, borderWidth: 1, flexDirection: "row", alignItems: "center" },
+  removeButton: { backgroundColor: "#7f1d1d", width: 34, height: 34, borderRadius: 17, justifyContent: "center", alignItems: "center", marginLeft: 10 },
+  removeText: { color: "#fff", fontWeight: "bold", fontSize: 13 },
+  totalBox: { flexDirection: "row", justifyContent: "space-between", marginTop: 22 },
+  totalText: { fontSize: 22, fontWeight: "bold" },
+  totalPrice: { fontSize: 22, fontWeight: "bold" },
+
+  paymentButton: { backgroundColor: "#2563eb", padding: 15, borderRadius: 12, marginTop: 20 },
+  paymentBox: { padding: 14, borderRadius: 16, marginTop: 16, borderWidth: 1 },
+  pixKey: { fontSize: 16, fontWeight: "bold", marginTop: 8, marginBottom: 18 },
+
+  successHeader: { flexDirection: "row", justifyContent: "center", alignItems: "center", marginBottom: 22 },
+  successLogo: { width: 48, height: 48, resizeMode: "contain", marginRight: 12 },
+  successTitle: { fontSize: 30, fontWeight: "bold" },
+  purchaseDate: { textAlign: "center", fontSize: 15 },
+  purchaseDateValue: { textAlign: "center", fontSize: 17, fontWeight: "bold", marginBottom: 22, marginTop: 6 },
+  keyBox: { padding: 18, borderRadius: 16, marginBottom: 18, borderWidth: 1 },
+  gameKey: { fontSize: 16, fontWeight: "bold", marginTop: 8 },
+
+  profileAvatar: { width: 80, height: 80, borderRadius: 40, justifyContent: "center", alignItems: "center" },
+  profileAvatarText: { color: "#fff", fontWeight: "bold", fontSize: 28 },
+  profileInfoBox: { borderRadius: 16, padding: 16, borderWidth: 1 },
+
+  adminHeader: { padding: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1 },
+  adminHeaderTitle: { fontSize: 20, fontWeight: "bold" },
+  adminTabs: { flexDirection: "row", borderBottomWidth: 1 },
+  adminTab: { flex: 1, padding: 14, alignItems: "center" },
+  adminTabActive: { borderBottomWidth: 3, borderBottomColor: "#2563eb" },
+  adminTabText: { fontWeight: "bold", fontSize: 13 },
+  adminAddBtn: { backgroundColor: "#16a34a", padding: 14, borderRadius: 12, alignItems: "center", marginBottom: 16 },
+  adminAddBtnText: { color: "#fff", fontWeight: "bold", fontSize: 14 },
+  adminForm: { borderRadius: 16, padding: 16, marginBottom: 20, borderWidth: 1 },
+  adminFormTitle: { fontSize: 18, fontWeight: "bold", marginBottom: 14 },
+  adminInput: { borderRadius: 10, padding: 13, marginBottom: 12, fontSize: 14 },
+  adminNote: { fontSize: 11, marginBottom: 12, lineHeight: 16 },
+  adminSaveBtn: { backgroundColor: "#2563eb", padding: 14, borderRadius: 12, alignItems: "center" },
+  adminSaveBtnText: { color: "#fff", fontWeight: "bold", fontSize: 14 },
+  adminEmpty: { borderRadius: 16, padding: 28, alignItems: "center", borderWidth: 1 },
+  adminEmptyText: { fontSize: 15 },
+  adminCard: { borderRadius: 16, padding: 16, marginBottom: 14, borderWidth: 1 },
+  adminCardTop: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+  adminAvatar: { width: 44, height: 44, borderRadius: 22, justifyContent: "center", alignItems: "center", marginRight: 12 },
+  adminAvatarText: { color: "#fff", fontWeight: "bold", fontSize: 16 },
+  adminCardName: { fontWeight: "bold", fontSize: 15 },
+  adminCardSub: { fontSize: 12, marginTop: 2 },
+  adminCardDivider: { height: 1, marginBottom: 12 },
+  adminRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "transparent" },
+  adminLabel: { fontSize: 13 },
+  adminValue: { fontSize: 13, fontWeight: "bold" },
+  adminDeleteBtn: { backgroundColor: "#7f1d1d", width: 36, height: 36, borderRadius: 18, justifyContent: "center", alignItems: "center" },
+  adminDeleteText: { fontSize: 15 },
+  adminGameCard: { borderRadius: 16, padding: 14, marginBottom: 14, borderWidth: 1, flexDirection: "row", alignItems: "center" },
+  adminGameImage: { width: 70, height: 70, borderRadius: 10, resizeMode: "cover" },
+  adminGamePrice: { fontWeight: "bold", fontSize: 14, marginTop: 4 },
+  adminGameButtons: { flexDirection: "row", gap: 8, marginTop: 8 },
+  adminEditBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8 },
+  adminEditText: { fontSize: 12, fontWeight: "bold" },
+});
